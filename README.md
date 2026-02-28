@@ -116,9 +116,19 @@ sequenceDiagram
 git clone https://github.com/oOSomnus/Codii.git
 cd codii
 uv pip install -e .
+```
 
-# Or with pip
-pip install -e .
+## Uninstallation
+
+```bash
+# Remove the package
+uv pip uninstall codii
+
+# Remove Claude Code integration
+claude mcp remove codii
+
+# Optional: Remove all index data
+rm -rf ~/.codii/
 ```
 
 ## Usage
@@ -184,101 +194,30 @@ Clear an indexed codebase.
 
 ## MCP Client Integration
 
-Codii can be integrated with various MCP clients. Below are configuration examples for popular clients.
-
 ### Claude Code
 
-**Quick setup:**
+After installing the package locally, add it to Claude Code:
+
 ```bash
-claude mcp add codii -- uvx codii
+# Add the MCP server to Claude Code
+claude mcp add --transport stdio codii -- uv run --directory /path/to/codii python -m codii.server
 ```
 
-**Manual configuration** (`~/.claude/claude_desktop_config.json`):
-```json
-{
-  "mcpServers": {
-    "codii": {
-      "command": "uvx",
-      "args": ["codii"]
-    }
-  }
-}
+Or if you've installed the package:
+
+```bash
+# After running: uv pip install -e .
+claude mcp add --transport stdio codii -- codii
 ```
 
-For local development:
-```json
-{
-  "mcpServers": {
-    "codii": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/codii", "codii"]
-    }
-  }
-}
-```
+For manual configuration, edit `~/.claude/settings.json`:
 
-### OpenAI Codex CLI
-
-**Configuration** (`~/.codex/config.toml`):
-```toml
-[mcp_servers.codii]
-command = "uvx"
-args = ["codii"]
-
-# Optional: Increase timeout for first-time embedding model load
-startup_timeout_ms = 30000
-```
-
-### Gemini CLI
-
-**Configuration** (`~/.gemini/settings.json`):
-```json
-{
-  "mcpServers": {
-    "codii": {
-      "command": "uvx",
-      "args": ["codii"]
-    }
-  }
-}
-```
-
-### Qwen Code
-
-**Configuration** (`~/.qwen/settings.json`):
-```json
-{
-  "mcpServers": {
-    "codii": {
-      "command": "uvx",
-      "args": ["codii"]
-    }
-  }
-}
-```
-
-### Other MCP Clients
-
-For clients that support stdio-based MCP servers, use the generic configuration pattern:
-
-```json
-{
-  "mcpServers": {
-    "codii": {
-      "command": "uvx",
-      "args": ["codii"]
-    }
-  }
-}
-```
-
-Or with a local installation:
 ```json
 {
   "mcpServers": {
     "codii": {
       "command": "uv",
-      "args": ["run", "codii"]
+      "args": ["run", "--directory", "/path/to/codii", "python", "-m", "codii.server"]
     }
   }
 }
@@ -292,8 +231,8 @@ To use a custom storage location, set the `CODII_BASE_DIR` environment variable:
 {
   "mcpServers": {
     "codii": {
-      "command": "uvx",
-      "args": ["codii"],
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/codii", "python", "-m", "codii.server"],
       "env": {
         "CODII_BASE_DIR": "/custom/storage/path"
       }
@@ -304,7 +243,7 @@ To use a custom storage location, set the `CODII_BASE_DIR` environment variable:
 
 ### First Run Note
 
-On first run, the embedding model (`all-MiniLM-L6-v2`) will be downloaded, which may take a few minutes. Some MCP clients may need an increased startup timeout (e.g., `startup_timeout_ms: 30000`) to accommodate this initial load.
+On first run, the embedding model (`all-MiniLM-L6-v2`) will be downloaded, which may take a few minutes.
 
 ## Storage
 
