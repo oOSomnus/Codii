@@ -2,64 +2,81 @@
   <img src="assets/codii.png" alt="Codii">
 </p>
 
-# Codii - Local Code Repository Indexing MCP Server
+# Codii - Local Code Repository Indexing with Hybrid Search
 
-A local code repository indexing MCP (Model Context Protocol) server with hybrid BM25 and vector search capabilities.
+A local code repository indexing tool with hybrid BM25 and vector search capabilities. Available as both a CLI tool and an MCP (Model Context Protocol) server.
 
 ## Architecture Overview
 
 ```mermaid
 graph TB
-    subgraph "MCP Client"
-        C[Claude Desktop / MCP Inspector]
+    subgraph Clients
+        CLI[Terminal / Shell]
+        C[Claude Desktop]
     end
 
-    subgraph "Codii MCP Server"
-        S[FastMCP Server]
+    subgraph Codii
+        subgraph Entry
+            CLIM[CLI Module]
+            SVR[MCP Server]
+        end
 
-        subgraph "Tools"
+        subgraph Tools
             T1[index_codebase]
             T2[search_code]
             T3[clear_index]
             T4[get_indexing_status]
         end
 
-        subgraph "Core Components"
-            CH[AST Chunker<br/>tree-sitter]
-            EM[Embedder<br/>all-MiniLM-L6-v2]
-            MK[Merkle Tree<br/>Change Detection]
+        subgraph Core
+            CH[AST Chunker]
+            EM[Embedder]
+            MK[Merkle Tree]
         end
 
-        subgraph "Indexers"
-            BM25[BM25 Indexer<br/>SQLite FTS5]
-            VEC[Vector Indexer<br/>HNSW]
-            HYB[Hybrid Search<br/>RRF]
+        subgraph Indexers
+            BM25[BM25 Indexer]
+            VEC[Vector Indexer]
+            HYB[Hybrid Search]
         end
 
-        subgraph "Storage"
+        subgraph Storage
             DB[(SQLite DB)]
             IDX[(HNSW Index)]
-            SNAP[(Snapshot JSON)]
+            SNAP[(Snapshot)]
             MKC[(Merkle Cache)]
         end
     end
 
-    subgraph "File System"
-        FS[Code Repository]
-    end
+    FS[Code Repository]
 
-    C -->|MCP Protocol| S
-    S --> T1 & T2 & T3 & T4
-    T1 --> CH --> EM --> BM25 & VEC
+    CLI --> CLIM
+    C --> SVR
+    CLIM --> T1
+    CLIM --> T2
+    CLIM --> T3
+    CLIM --> T4
+    SVR --> T1
+    SVR --> T2
+    SVR --> T3
+    SVR --> T4
+    T1 --> CH
+    CH --> EM
+    EM --> BM25
+    EM --> VEC
     T1 --> MK
+    T1 --> FS
     T2 --> HYB
-    HYB --> BM25 & VEC
+    HYB --> BM25
+    HYB --> VEC
     BM25 --> DB
     VEC --> IDX
     T4 --> SNAP
     MK --> MKC
-    T1 --> FS
-    T3 --> DB & IDX & MKC & SNAP
+    T3 --> DB
+    T3 --> IDX
+    T3 --> MKC
+    T3 --> SNAP
 ```
 
 ## Data Flow
@@ -226,21 +243,107 @@ uv tool uninstall codii
 # If installed with pip/uv pip
 pip uninstall codii
 
-# Remove Claude Code integration
+# Remove Claude Code integration (if added)
 claude mcp remove codii
 
 # Optional: Remove all index data
 rm -rf ~/.codii/
 ```
 
+**Note:** The package provides two entry points:
+- `codii` - CLI tool for direct terminal access
+- `codii-server` - MCP server for AI assistant integration
+
+Both are removed when uninstalling the package.
+
 ## Usage
+
+Codii provides two interfaces:
+
+1. **CLI Tool** - Direct terminal access for index management and debugging
+2. **MCP Server** - Integration with MCP clients like Claude Code
+
+### CLI Commands
+
+After installation, the `codii` CLI tool is available:
+
+```bash
+codii --help                    # Show all commands
+codii status [PATH]             # Show indexing status (defaults to cwd)
+codii list                      # List all indexed codebases
+codii inspect QUERY [PATH]      # Search chunks for debugging
+codii build [PATH] [--force] [--daemon]  # Build/rebuild index
+codii stats [PATH]              # Show detailed statistics
+codii clear [PATH] [--all]      # Clear index for path or all
+```
+
+#### `codii status`
+
+Show the indexing status of a codebase with color-coded output:
+
+```bash
+codii status                    # Status of current directory
+codii status /path/to/repo      # Status of specific path
+```
+
+#### `codii list`
+
+List all indexed codebases in a table format:
+
+```bash
+codii list
+```
+
+Output shows path, status, files, chunks, and index size for each codebase.
+
+#### `codii build`
+
+Build or rebuild an index with optional progress bar:
+
+```bash
+codii build .                   # Build index with progress bar (foreground)
+codii build . --force           # Force full re-index
+codii build . --daemon          # Build in background (like MCP behavior)
+```
+
+The foreground mode shows a live progress bar with stages: preparing, deleting, chunking, embedding, indexing.
+
+#### `codii inspect`
+
+Search and inspect chunks for debugging:
+
+```bash
+codii inspect "function"        # Search current directory
+codii inspect "database" /path/to/repo  # Search specific path
+codii inspect "query" --limit 20        # More results
+codii inspect "query" --raw             # Show full content (no truncation)
+```
+
+#### `codii stats`
+
+Show detailed statistics including breakdown by language and chunk type:
+
+```bash
+codii stats                     # Stats for current directory
+codii stats /path/to/repo       # Stats for specific path
+```
+
+#### `codii clear`
+
+Clear an index with confirmation prompt:
+
+```bash
+codii clear .                   # Clear current directory (prompts for confirmation)
+codii clear . --force           # Skip confirmation prompt
+codii clear --all               # Clear all indexed codebases
+```
 
 ### Running the MCP Server
 
-After installation, simply run:
+The MCP server provides tools for AI assistants:
 
 ```bash
-codii
+codii-server                    # Start MCP server (after installation)
 ```
 
 If running from the source directory without installing:
@@ -314,11 +417,11 @@ Clear an indexed codebase.
 
 ### Claude Code
 
-After installing the package (via pipx or pip), add it to Claude Code:
+After installing the package (via pipx or pip), add the MCP server to Claude Code:
 
 ```bash
 # Simple method - works after pipx install or pip install
-claude mcp add --transport stdio codii -- codii
+claude mcp add --transport stdio codii -- codii-server
 ```
 
 For manual configuration, edit `~/.claude/settings.json`:
@@ -327,11 +430,13 @@ For manual configuration, edit `~/.claude/settings.json`:
 {
   "mcpServers": {
     "codii": {
-      "command": "codii"
+      "command": "codii-server"
     }
   }
 }
 ```
+
+**Note:** Use `codii-server` (not `codii`) for MCP integration. The `codii` command is the CLI tool.
 
 **Development Setup** (running from source without installing):
 
@@ -437,6 +542,7 @@ min_chunk_size: 100
 ```
 codii/
 ├── src/codii/
+│   ├── cli.py                 # CLI entry point
 │   ├── server.py              # MCP server entry point
 │   ├── tools/                 # MCP tool implementations
 │   │   ├── index_codebase.py

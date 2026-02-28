@@ -8,11 +8,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Install package
 uv pip install -e .
 
-# Run the MCP server
-uv run python -m codii.server
+# Run the CLI tool
+codii --help
+codii status
+codii build .
+codii list
 
-# Run directly (after install)
-codii
+# Run the MCP server
+codii-server
+
+# Or run server directly with uv
+uv run python -m codii.server
 
 # Clear all index data (useful during development)
 rm -rf ~/.codii/
@@ -30,13 +36,22 @@ pytest tests/test_indexers/test_hybrid_search.py
 pytest tests/test_storage/test_database.py::TestInsertChunk::test_insert_chunk
 ```
 
+## Entry Points
+
+The package provides two entry points:
+
+1. **`codii`** - CLI tool for direct terminal access
+2. **`codii-server`** - MCP server for AI assistant integration
+
+Both are installed when the package is installed.
+
 ## Architecture
 
 ### Layered Design
 
 The codebase follows a strict layered architecture where dependencies flow downward:
 
-1. **Tools** (`tools/`) - MCP tool implementations that orchestrate lower layers
+1. **CLI/Tools** (`cli.py`, `tools/`) - User interfaces (CLI commands and MCP tool implementations)
 2. **Indexers** (`indexers/`) - Search engines (BM25, Vector, Hybrid)
 3. **Chunkers** (`chunkers/`) - Code splitting (AST-based via tree-sitter, text fallback)
 4. **Storage** (`storage/`) - SQLite database, snapshot state
