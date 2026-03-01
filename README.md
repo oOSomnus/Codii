@@ -495,6 +495,9 @@ All index data is stored in `~/.codii/`:
     └── <hash-of-path>.json     # Merkle tree cache per codebase
 ```
 
+For detailed information about database schemas, dataclasses, and file formats, see [docs/schemas.md](docs/schemas.md).
+
+
 ## Configuration
 
 Create a `.codii.yaml` file in your project root:
