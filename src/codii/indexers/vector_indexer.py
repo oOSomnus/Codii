@@ -108,6 +108,7 @@ class VectorIndexer:
         chunk_ids: List[int],
         texts: Optional[List[str]] = None,
         vectors: Optional[np.ndarray] = None,
+        num_threads: int = -1,
     ) -> None:
         """
         Add vectors to the index.
@@ -116,6 +117,8 @@ class VectorIndexer:
             chunk_ids: List of chunk IDs
             texts: List of texts to embed (if vectors not provided)
             vectors: Pre-computed vectors (optional)
+            num_threads: Number of threads for parallel index construction.
+                        -1 means use all available cores. Default is -1.
         """
         if not chunk_ids:
             return
@@ -135,8 +138,8 @@ class VectorIndexer:
         end_id = start_id + len(chunk_ids)
         vector_ids = list(range(start_id, end_id))
 
-        # Add to index
-        self.index.add_items(vectors, vector_ids)
+        # Add to index with multi-threading
+        self.index.add_items(vectors, vector_ids, num_threads=num_threads)
 
         # Update mappings
         for vector_id, chunk_id in zip(vector_ids, chunk_ids):

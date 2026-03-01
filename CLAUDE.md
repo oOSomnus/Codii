@@ -65,6 +65,12 @@ The codebase follows a strict layered architecture where dependencies flow downw
 
 **Background Indexing**: `index_codebase` runs indexing in a background thread. Progress is tracked via `SnapshotManager` in `~/.codii/snapshots/snapshot.json`. Check status with `get_indexing_status`.
 
+**Parallel Indexing**: The indexing pipeline uses parallel processing for CPU-bound operations:
+- **Parallel Chunking**: AST parsing uses `ProcessPoolExecutor` with configurable workers. File contents are read in the main process; chunkers are created fresh in each worker to avoid pickling issues with tree-sitter parsers.
+- **Multi-threaded HNSW**: Vector index construction uses `hnswlib`'s `num_threads` parameter for parallel insertion.
+- **Auto-detection**: Both workers and HNSW threads auto-detect based on CPU count when set to 0 (default).
+- Configure via `workers` and `hnswThreads` parameters on the `index_codebase` tool.
+
 **Incremental Indexing**: Re-indexing automatically detects changes via Merkle tree comparison:
 - Only processes files that are added, modified, or removed
 - DELETE phase: Removes stale chunks from SQLite and vectors from HNSW (soft delete)
@@ -114,6 +120,8 @@ Config is loaded from (in order):
 3. Default `~/.codii/`
 
 Access via `get_config()` from `utils/config.py`.
+
+**Worker/Thread Helpers**: Use `CodiiConfig.get_effective_workers()` and `CodiiConfig.get_effective_hnsw_threads()` to auto-detect parallelism based on CPU cores.
 
 ## Adding a New Language
 

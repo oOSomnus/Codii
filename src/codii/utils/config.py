@@ -174,6 +174,34 @@ class CodiiConfig:
 
         return config
 
+    @staticmethod
+    def get_effective_workers(requested: int = 0) -> int:
+        """Get chunking workers, auto-detect if not specified.
+
+        Args:
+            requested: Requested worker count. 0 means auto-detect.
+
+        Returns:
+            Number of workers to use for parallel chunking.
+        """
+        if requested > 0:
+            return requested
+        return max(1, (os.cpu_count() or 4) - 1)
+
+    @staticmethod
+    def get_effective_hnsw_threads(requested: int = 0) -> int:
+        """Get HNSW threads, auto-detect if not specified.
+
+        Args:
+            requested: Requested thread count. 0 means auto-detect.
+
+        Returns:
+            Number of threads to use for HNSW index construction.
+        """
+        if requested > 0:
+            return requested
+        return os.cpu_count() or 4
+
 
 # Global config instance
 _config: Optional[CodiiConfig] = None

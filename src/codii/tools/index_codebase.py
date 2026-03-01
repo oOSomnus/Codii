@@ -1,19 +1,54 @@
 """Index codebase tool for codii."""
 
 import asyncio
+import os
 import threading
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Optional, List
 
-from ..utils.config import get_config
+from ..utils.config import get_config, CodiiConfig
 from ..utils.file_utils import scan_directory, get_file_content, detect_language
 from ..storage.snapshot import SnapshotManager
 from ..storage.database import Database
-from ..chunkers.ast_chunker import ASTChunker
-from ..chunkers.text_chunker import TextChunker
 from ..indexers.bm25_indexer import BM25Indexer
 from ..indexers.vector_indexer import VectorIndexer
 from ..merkle.tree import MerkleTree
+
+
+def _chunk_file_worker(args: tuple) -> list:
+    """Worker function for parallel chunking (must be module-level for pickle).
+
+    Args:
+        args: Tuple of (file_path_str, content, language, max_chunk_size, min_chunk_size, splitter)
+
+    Returns:
+        List of Chunk objects
+    """
+    file_path_str, content, language, max_chunk_size, min_chunk_size, splitter = args
+
+    if content is None:
+        return []
+
+    # Create chunker in worker (can't pickle ASTChunker with parsers)
+    if splitter == "ast":
+        from ..chunkers.ast_chunker import ASTChunker
+        chunker = ASTChunker()
+        return chunker.chunk_file(
+            content,
+            file_path_str,
+            language,
+            max_chunk_size,
+            min_chunk_size,
+        )
+    else:
+        from ..chunkers.text_chunker import TextChunker
+        chunker = TextChunker(max_chunk_size, min_chunk_size)
+        return chunker.chunk_file(
+            content,
+            file_path_str,
+            language,
+        )
 
 
 class IndexCodebaseTool:
@@ -63,13 +98,25 @@ class IndexCodebaseTool:
                     "default": [],
                     "description": "Additional patterns to ignore",
                 },
+                "workers": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": "Number of parallel workers for chunking. 0 = auto-detect based on CPU cores.",
+                },
+                "hnswThreads": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": "Number of threads for HNSW index construction. 0 = auto-detect based on CPU cores.",
+                },
             },
             "required": ["path"],
         }
 
     def run(self, path: str, force: bool = False, splitter: str = "ast",
             customExtensions: Optional[List[str]] = None,
-            ignorePatterns: Optional[List[str]] = None) -> dict:
+            ignorePatterns: Optional[List[str]] = None,
+            workers: int = 0,
+            hnswThreads: int = 0) -> dict:
         """
         Index a codebase with automatic incremental update support.
 
@@ -87,6 +134,8 @@ class IndexCodebaseTool:
             splitter: Code splitting method ("ast" or "langchain")
             customExtensions: Additional file extensions to index
             ignorePatterns: Additional patterns to ignore
+            workers: Number of parallel workers for chunking. 0 = auto-detect.
+            hnswThreads: Number of threads for HNSW index construction. 0 = auto-detect.
 
         Returns:
             Dict with result message or error
@@ -176,7 +225,7 @@ class IndexCodebaseTool:
         # Start indexing in background
         thread = threading.Thread(
             target=self._index_codebase,
-            args=(path_str, splitter, customExtensions or [], ignorePatterns or [], force),
+            args=(path_str, splitter, customExtensions or [], ignorePatterns or [], force, workers, hnswThreads),
             daemon=True,
         )
         thread.start()
@@ -197,11 +246,22 @@ class IndexCodebaseTool:
         custom_extensions: List[str],
         ignore_patterns: List[str],
         force: bool = False,
+        workers: int = 0,
+        hnsw_threads: int = 0,
     ) -> None:
         """Perform the actual indexing (runs in background thread).
 
         Supports incremental updates: only processes files that have been
         added, removed, or modified since the last index.
+
+        Args:
+            path: Codebase path
+            splitter: Code splitting method
+            custom_extensions: Additional file extensions to index
+            ignore_patterns: Patterns to ignore
+            force: Force full re-index
+            workers: Number of parallel workers for chunking (0 = auto)
+            hnsw_threads: Number of threads for HNSW (0 = auto)
         """
         try:
             # Mark as indexing
@@ -310,37 +370,44 @@ class IndexCodebaseTool:
                 path, 20, "chunking", 0, 0, total_files, files_to_process
             )
 
-            chunker = ASTChunker() if splitter == "ast" else TextChunker(
-                max_chunk_size=self.config.max_chunk_size,
-                min_chunk_size=self.config.min_chunk_size,
-            )
-
-            all_chunks = []
             files_to_add_list = list(files_to_add)
             total_files_to_add = len(files_to_add_list)
 
-            for i, file_path_str in enumerate(files_to_add_list):
+            # Prepare arguments for parallel chunking
+            # Read file contents in main process (I/O bound)
+            chunk_args = []
+            for file_path_str in files_to_add_list:
                 file_path = Path(file_path_str)
                 content = get_file_content(file_path)
-                if content is None:
-                    continue
-
                 language = detect_language(file_path)
-                chunks = chunker.chunk_file(
+                chunk_args.append((
+                    file_path_str,
                     content,
-                    str(file_path),
                     language,
                     self.config.max_chunk_size,
                     self.config.min_chunk_size,
-                )
-                all_chunks.extend(chunks)
+                    splitter,
+                ))
 
-                # Update progress
-                if total_files_to_add > 0:
-                    progress = 20 + int((i / total_files_to_add) * 20)
-                    self.snapshot_manager.update_progress(
-                        path, progress, "chunking", i + 1, len(all_chunks), total_files, files_to_process
-                    )
+            # Determine number of workers
+            num_workers = CodiiConfig.get_effective_workers(workers)
+
+            all_chunks = []
+            if total_files_to_add > 0:
+                # Use ProcessPoolExecutor for CPU-bound chunking
+                # Update progress in batches to avoid lock contention
+                update_interval = max(1, min(10, total_files_to_add // 10))
+
+                with ProcessPoolExecutor(max_workers=num_workers) as executor:
+                    for i, result in enumerate(executor.map(_chunk_file_worker, chunk_args)):
+                        all_chunks.extend(result)
+
+                        # Update progress every N files
+                        if (i + 1) % update_interval == 0 or i == total_files_to_add - 1:
+                            progress = 20 + int(((i + 1) / total_files_to_add) * 20)
+                            self.snapshot_manager.update_progress(
+                                path, progress, "chunking", i + 1, len(all_chunks), total_files, files_to_process
+                            )
 
             # Stage 4: Embedding (40-80%)
             self.snapshot_manager.update_progress(
@@ -390,7 +457,9 @@ class IndexCodebaseTool:
                 new_chunk_ids = all_chunk_ids[-len(all_chunks):]
 
                 if len(new_chunk_ids) == len(all_vectors):
-                    vector_indexer.add_vectors(new_chunk_ids, vectors=all_vectors)
+                    # Use multi-threaded HNSW insertion
+                    effective_hnsw_threads = CodiiConfig.get_effective_hnsw_threads(hnsw_threads)
+                    vector_indexer.add_vectors(new_chunk_ids, vectors=all_vectors, num_threads=effective_hnsw_threads)
 
                 # Save vector index
                 vector_indexer.save()

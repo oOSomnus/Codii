@@ -494,3 +494,255 @@ class TestRemoveByChunkIds:
 
         assert removed == 1  # Only one actually removed
         assert indexer.get_vector_count() == 1
+
+
+class TestParallelChunking:
+    """Tests for parallel chunking functionality."""
+
+    def test_chunk_file_worker_ast(self):
+        """Test the chunk file worker function with AST splitter."""
+        from codii.tools.index_codebase import _chunk_file_worker
+
+        content = '''
+def hello():
+    """Say hello."""
+    print("Hello, World!")
+
+class Greeter:
+    def greet(self):
+        pass
+'''
+        args = (
+            "/path/to/file.py",
+            content,
+            "python",
+            1500,
+            100,
+            "ast",
+        )
+
+        chunks = _chunk_file_worker(args)
+
+        assert len(chunks) >= 1
+        # Verify chunks have proper structure
+        for chunk in chunks:
+            assert hasattr(chunk, 'content')
+            assert hasattr(chunk, 'path')
+            assert chunk.path == "/path/to/file.py"
+
+    def test_chunk_file_worker_text(self):
+        """Test the chunk file worker function with text splitter."""
+        from codii.tools.index_codebase import _chunk_file_worker
+
+        content = "Line 1\nLine 2\nLine 3\n" * 100  # Large enough to chunk
+        args = (
+            "/path/to/file.txt",
+            content,
+            "text",
+            500,  # Small max chunk size to force multiple chunks
+            100,
+            "langchain",
+        )
+
+        chunks = _chunk_file_worker(args)
+
+        assert len(chunks) >= 1
+        for chunk in chunks:
+            assert hasattr(chunk, 'content')
+
+    def test_chunk_file_worker_none_content(self):
+        """Test the chunk file worker with None content."""
+        from codii.tools.index_codebase import _chunk_file_worker
+
+        args = (
+            "/path/to/file.py",
+            None,  # No content
+            "python",
+            1500,
+            100,
+            "ast",
+        )
+
+        chunks = _chunk_file_worker(args)
+
+        assert chunks == []
+
+    def test_parallel_vs_sequential_results(self, temp_dir, mock_config):
+        """Verify parallel chunking produces same results as sequential."""
+        import time
+        from codii.storage.snapshot import SnapshotManager
+        from codii.storage.database import Database
+
+        # Create multiple Python files
+        for i in range(10):
+            (temp_dir / f"file_{i}.py").write_text(f'''
+def function_{i}():
+    """Function {i}."""
+    return {i}
+
+class Class{i}:
+    def method(self):
+        return {i}
+''')
+
+        # Index with default (parallel) workers
+        tool1 = IndexCodebaseTool()
+        result1 = tool1.run(path=str(temp_dir), force=True)
+        assert result1["isError"] is False
+
+        # Wait for indexing
+        time.sleep(3)
+
+        snapshot = SnapshotManager(mock_config.snapshot_file)
+        status = snapshot.get_status(str(temp_dir))
+
+        if status.status == "indexed":
+            path_hash = snapshot.path_to_hash(str(temp_dir))
+            db_path = mock_config.indexes_dir / path_hash / "chunks.db"
+            if db_path.exists():
+                db = Database(db_path)
+                parallel_chunk_count = db.get_chunk_count()
+
+                # Now index with workers=1 (sequential)
+                tool2 = IndexCodebaseTool()
+                result2 = tool2.run(path=str(temp_dir), force=True, workers=1)
+                assert result2["isError"] is False
+
+                time.sleep(3)
+
+                # Should have same number of chunks
+                sequential_chunk_count = db.get_chunk_count()
+                assert parallel_chunk_count == sequential_chunk_count
+
+    def test_index_with_explicit_workers(self, index_tool, sample_repo):
+        """Test indexing with explicit worker count."""
+        result = index_tool.run(
+            path=str(sample_repo),
+            workers=2,
+        )
+
+        assert result["isError"] is False
+        assert "Indexing started" in result["content"][0]["text"]
+
+    def test_index_with_explicit_hnsw_threads(self, index_tool, sample_repo):
+        """Test indexing with explicit HNSW thread count."""
+        result = index_tool.run(
+            path=str(sample_repo),
+            hnswThreads=2,
+        )
+
+        assert result["isError"] is False
+        assert "Indexing started" in result["content"][0]["text"]
+
+    def test_index_with_workers_auto_detect(self, index_tool, sample_repo):
+        """Test indexing with workers=0 (auto-detect)."""
+        result = index_tool.run(
+            path=str(sample_repo),
+            workers=0,  # Auto-detect
+        )
+
+        assert result["isError"] is False
+
+    def test_input_schema_has_workers_param(self, index_tool):
+        """Verify input schema includes workers parameter."""
+        schema = index_tool.get_input_schema()
+
+        assert "workers" in schema["properties"]
+        assert schema["properties"]["workers"]["type"] == "integer"
+        assert schema["properties"]["workers"]["default"] == 0
+
+    def test_input_schema_has_hnsw_threads_param(self, index_tool):
+        """Verify input schema includes hnswThreads parameter."""
+        schema = index_tool.get_input_schema()
+
+        assert "hnswThreads" in schema["properties"]
+        assert schema["properties"]["hnswThreads"]["type"] == "integer"
+        assert schema["properties"]["hnswThreads"]["default"] == 0
+
+
+class TestConfigWorkerHelpers:
+    """Tests for config helper methods for workers/threads."""
+
+    def test_get_effective_workers_explicit(self):
+        """Test get_effective_workers with explicit value."""
+        from codii.utils.config import CodiiConfig
+
+        assert CodiiConfig.get_effective_workers(4) == 4
+        assert CodiiConfig.get_effective_workers(1) == 1
+        assert CodiiConfig.get_effective_workers(8) == 8
+
+    def test_get_effective_workers_auto_detect(self):
+        """Test get_effective_workers with auto-detect (0)."""
+        import os
+        from codii.utils.config import CodiiConfig
+
+        result = CodiiConfig.get_effective_workers(0)
+        expected = max(1, (os.cpu_count() or 4) - 1)
+        assert result == expected
+
+    def test_get_effective_hnsw_threads_explicit(self):
+        """Test get_effective_hnsw_threads with explicit value."""
+        from codii.utils.config import CodiiConfig
+
+        assert CodiiConfig.get_effective_hnsw_threads(4) == 4
+        assert CodiiConfig.get_effective_hnsw_threads(1) == 1
+        assert CodiiConfig.get_effective_hnsw_threads(8) == 8
+
+    def test_get_effective_hnsw_threads_auto_detect(self):
+        """Test get_effective_hnsw_threads with auto-detect (0)."""
+        import os
+        from codii.utils.config import CodiiConfig
+
+        result = CodiiConfig.get_effective_hnsw_threads(0)
+        expected = os.cpu_count() or 4
+        assert result == expected
+
+
+class TestVectorIndexerThreads:
+    """Tests for multi-threaded HNSW insertion."""
+
+    def test_add_vectors_with_num_threads(self, temp_vector_path):
+        """Test add_vectors with num_threads parameter."""
+        import numpy as np
+        from codii.indexers.vector_indexer import VectorIndexer
+
+        indexer = VectorIndexer(temp_vector_path)
+
+        # Add vectors with explicit thread count
+        chunk_ids = list(range(100))
+        vectors = np.random.rand(100, 384).astype(np.float32)
+
+        # Should not raise an error
+        indexer.add_vectors(chunk_ids, vectors=vectors, num_threads=4)
+
+        assert indexer.get_vector_count() == 100
+
+    def test_add_vectors_default_threads(self, temp_vector_path):
+        """Test add_vectors with default num_threads (-1)."""
+        import numpy as np
+        from codii.indexers.vector_indexer import VectorIndexer
+
+        indexer = VectorIndexer(temp_vector_path)
+
+        chunk_ids = list(range(50))
+        vectors = np.random.rand(50, 384).astype(np.float32)
+
+        # Default num_threads=-1 should use all cores
+        indexer.add_vectors(chunk_ids, vectors=vectors)
+
+        assert indexer.get_vector_count() == 50
+
+    def test_add_vectors_single_thread(self, temp_vector_path):
+        """Test add_vectors with single thread."""
+        import numpy as np
+        from codii.indexers.vector_indexer import VectorIndexer
+
+        indexer = VectorIndexer(temp_vector_path)
+
+        chunk_ids = list(range(50))
+        vectors = np.random.rand(50, 384).astype(np.float32)
+
+        # Single thread
+        indexer.add_vectors(chunk_ids, vectors=vectors, num_threads=1)
+
+        assert indexer.get_vector_count() == 50

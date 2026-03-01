@@ -155,6 +155,7 @@ sequenceDiagram
 - **Cross-Encoder Re-ranking**: Results are re-scored with a cross-encoder for improved relevance (enabled by default)
 - **Smart Query Processing**: Multi-word queries are optimized with OR-matching, wildcards, code tokenization, and abbreviation expansion for better recall
 - **AST-Aware Chunking**: Uses tree-sitter for semantic code splitting (functions, classes, etc.)
+- **Parallel Indexing**: CPU-bound operations use parallel processing - AST chunking via ProcessPoolExecutor and multi-threaded HNSW index construction
 - **Incremental Updates**: Merkle tree-based change detection for efficient re-indexing - only processes added, modified, or removed files instead of re-indexing everything
 - **Local Embeddings**: CPU-runnable all-MiniLM-L6-v2 model for vector embeddings
 - **Multi-Language Support**: Python, JavaScript, TypeScript, Go, Rust, Java, C/C++
@@ -373,7 +374,9 @@ Index a codebase for semantic search. Automatically detects file changes and per
     "force": false,                  # Optional: Force full re-index (clears existing index)
     "splitter": "ast",               # Optional: "ast" or "langchain"
     "customExtensions": [".md"],     # Optional: Additional extensions
-    "ignorePatterns": ["tests/"]     # Optional: Additional ignore patterns
+    "ignorePatterns": ["tests/"],    # Optional: Additional ignore patterns
+    "workers": 0,                    # Optional: Parallel chunking workers (0 = auto-detect)
+    "hnswThreads": 0                 # Optional: HNSW index threads (0 = auto-detect)
 }
 ```
 
@@ -382,6 +385,10 @@ Index a codebase for semantic search. Automatically detects file changes and per
 - Already indexed + no file changes → Returns "No changes detected"
 - Already indexed + file changes detected → Incremental update (only processes changed files)
 - `force=true` → Clears existing index and performs full re-index
+
+**Parallelism:**
+- `workers`: Number of parallel processes for AST chunking. Default 0 auto-detects based on CPU count.
+- `hnswThreads`: Number of threads for HNSW vector index construction. Default 0 auto-detects.
 
 Use `force=true` only for recovery from corrupted indexes or when you want to reset the index completely.
 
