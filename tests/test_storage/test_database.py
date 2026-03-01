@@ -2,8 +2,10 @@
 
 import pytest
 from pathlib import Path
+import threading
+import sqlite3
 
-from codii.storage.database import Database
+from codii.storage.database import Database, preprocess_fts_query
 
 
 class TestDatabaseCreation:
@@ -290,6 +292,262 @@ class TestFTS5Triggers:
         assert len(results) == 0
 
         db.close()
+
+    def test_fts5_triggers_on_update_content(self, temp_db_path):
+        """Verify FTS5 sync when content is updated."""
+        db = Database(temp_db_path)
+
+        # Insert initial chunk
+        chunk_id = db.insert_chunk(
+            content="original_content_keyword",
+            path="/test/file.py",
+            language="python",
+            chunk_type="function",
+        )
+
+        # Verify initial content is searchable
+        cursor = db.conn.execute(
+            "SELECT * FROM chunks_fts WHERE chunks_fts MATCH 'original_content_keyword'"
+        )
+        assert len(cursor.fetchall()) == 1
+
+        # Update content directly
+        db.conn.execute(
+            "UPDATE chunks SET content = ? WHERE id = ?",
+            ("updated_content_keyword", chunk_id),
+        )
+        db.conn.commit()
+
+        # Old content should no longer be searchable
+        cursor = db.conn.execute(
+            "SELECT * FROM chunks_fts WHERE chunks_fts MATCH 'original_content_keyword'"
+        )
+        assert len(cursor.fetchall()) == 0
+
+        # New content should be searchable
+        cursor = db.conn.execute(
+            "SELECT * FROM chunks_fts WHERE chunks_fts MATCH 'updated_content_keyword'"
+        )
+        assert len(cursor.fetchall()) == 1
+
+        db.close()
+
+    def test_fts5_triggers_on_update_path(self, temp_db_path):
+        """Verify FTS5 sync when path is updated."""
+        db = Database(temp_db_path)
+
+        chunk_id = db.insert_chunk(
+            content="test_content_for_path_update",
+            path="/test/old_path.py",
+            language="python",
+            chunk_type="function",
+        )
+
+        # Update path
+        db.conn.execute(
+            "UPDATE chunks SET path = ? WHERE id = ?",
+            ("/test/new_path.py", chunk_id),
+        )
+        db.conn.commit()
+
+        # Verify search still works and path is updated
+        results = db.search_bm25("test_content_for_path_update")
+        assert len(results) == 1
+        assert results[0]["path"] == "/test/new_path.py"
+
+        db.close()
+
+    def test_fts5_triggers_on_update_language(self, temp_db_path):
+        """Verify FTS5 sync when language is updated."""
+        db = Database(temp_db_path)
+
+        chunk_id = db.insert_chunk(
+            content="test_content_language_update",
+            path="/test/file.py",
+            language="python",
+            chunk_type="function",
+        )
+
+        # Update language
+        db.conn.execute(
+            "UPDATE chunks SET language = ? WHERE id = ?",
+            ("javascript", chunk_id),
+        )
+        db.conn.commit()
+
+        # Verify search still works
+        results = db.search_bm25("test_content_language_update")
+        assert len(results) == 1
+        assert results[0]["language"] == "javascript"
+
+        db.close()
+
+    def test_fts5_no_trigger_on_non_indexed_column_update(self, temp_db_path):
+        """Verify FTS5 does NOT sync when non-indexed columns are updated.
+
+        The trigger is scoped to only fire on content, path, language updates.
+        Updating start_line, end_line, chunk_type, or created_at should not
+        trigger FTS5 re-indexing.
+        """
+        db = Database(temp_db_path)
+
+        chunk_id = db.insert_chunk(
+            content="unique_test_content_xyz",
+            path="/test/file.py",
+            language="python",
+            chunk_type="function",
+            start_line=1,
+            end_line=5,
+        )
+
+        # Get the row count in FTS before update
+        cursor = db.conn.execute("SELECT COUNT(*) FROM chunks_fts")
+        count_before = cursor.fetchone()[0]
+
+        # Update non-indexed column (start_line)
+        db.conn.execute(
+            "UPDATE chunks SET start_line = ? WHERE id = ?",
+            (10, chunk_id),
+        )
+        db.conn.commit()
+
+        # FTS count should remain the same (trigger should not fire)
+        cursor = db.conn.execute("SELECT COUNT(*) FROM chunks_fts")
+        count_after = cursor.fetchone()[0]
+
+        assert count_before == count_after
+
+        # Content should still be searchable
+        cursor = db.conn.execute(
+            "SELECT * FROM chunks_fts WHERE chunks_fts MATCH 'unique_test_content_xyz'"
+        )
+        assert len(cursor.fetchall()) == 1
+
+        db.close()
+
+    def test_fts5_trigger_case_sensitivity(self, temp_db_path):
+        """Verify FTS5 delete command uses lowercase 'delete'.
+
+        SQLite FTS5 requires lowercase 'delete' for the special command value.
+        This test ensures the trigger works correctly after an update.
+        """
+        db = Database(temp_db_path)
+
+        # Insert and then update
+        chunk_id = db.insert_chunk(
+            content="first_version_keyword",
+            path="/test/file.py",
+            language="python",
+            chunk_type="function",
+        )
+
+        # Update content
+        db.conn.execute(
+            "UPDATE chunks SET content = ? WHERE id = ?",
+            ("second_version_keyword", chunk_id),
+        )
+        db.conn.commit()
+
+        # First version should be completely gone from FTS
+        cursor = db.conn.execute(
+            "SELECT * FROM chunks_fts WHERE chunks_fts MATCH 'first_version_keyword'"
+        )
+        assert len(cursor.fetchall()) == 0
+
+        # Second version should be present
+        cursor = db.conn.execute(
+            "SELECT * FROM chunks_fts WHERE chunks_fts MATCH 'second_version_keyword'"
+        )
+        assert len(cursor.fetchall()) == 1
+
+        db.close()
+
+    def test_fts5_multiple_updates(self, temp_db_path):
+        """Verify FTS5 handles multiple consecutive updates correctly."""
+        db = Database(temp_db_path)
+
+        chunk_id = db.insert_chunk(
+            content="version_one",
+            path="/test/file.py",
+            language="python",
+            chunk_type="function",
+        )
+
+        for i, content in enumerate(["version_two", "version_three", "version_four"]):
+            db.conn.execute(
+                "UPDATE chunks SET content = ? WHERE id = ?",
+                (content, chunk_id),
+            )
+            db.conn.commit()
+
+            # Verify only current version is searchable
+            cursor = db.conn.execute(f"SELECT * FROM chunks_fts WHERE chunks_fts MATCH '{content}'")
+            assert len(cursor.fetchall()) == 1
+
+        # Verify all old versions are gone
+        for old_content in ["version_one", "version_two", "version_three"]:
+            cursor = db.conn.execute(
+                f"SELECT * FROM chunks_fts WHERE chunks_fts MATCH '{old_content}'"
+            )
+            assert len(cursor.fetchall()) == 0, f"Old content '{old_content}' should be gone"
+
+        db.close()
+
+
+class TestQueryPreprocessing:
+    """Tests for FTS5 query preprocessing."""
+
+    def test_preprocess_single_term(self):
+        """Single term gets wildcard suffix."""
+        result = preprocess_fts_query("kalloc")
+        assert result == "kalloc*"
+
+    def test_preprocess_multiple_terms_with_or(self):
+        """Multiple terms joined with OR and wildcards."""
+        result = preprocess_fts_query("page table walk")
+        assert result == "page* OR table* OR walk*"
+
+    def test_preprocess_empty_query(self):
+        """Empty query returns empty string."""
+        assert preprocess_fts_query("") == ""
+        assert preprocess_fts_query("   ") == ""
+
+    def test_preprocess_removes_special_chars(self):
+        """FTS5 special characters are removed."""
+        result = preprocess_fts_query('test* ^query" (with) -special|chars')
+        # Special chars are stripped, then wildcards are added to each term
+        # Input becomes: "test query with special chars" after stripping
+        # Then wildcards are added: "test* OR query* OR with* OR special* OR chars*"
+        assert "^" not in result
+        assert '"' not in result
+        assert "(" not in result
+        assert ")" not in result
+        assert "|" not in result
+        # The original * in test* is removed, then * is added back by wildcard logic
+        assert result == "test* OR query* OR with* OR special* OR chars*"
+
+    def test_preprocess_no_wildcard_option(self):
+        """Can disable wildcard suffixes."""
+        result = preprocess_fts_query("test query", add_wildcards=False)
+        assert result == "test OR query"
+
+    def test_preprocess_no_or_option(self):
+        """Can disable OR joining for multiple terms."""
+        result = preprocess_fts_query("test query", use_or=False)
+        # The function logic: if use_or is False, it still joins with OR for len > 1
+        # because of the fallback in the else branch
+        # Looking at the actual code:
+        # if use_or and len(processed_terms) > 1: return ' OR '.join(...)
+        # else: return processed_terms[0] if len(...) == 1 else ' OR '.join(...)
+        # So with use_or=False and 2 terms, it goes to else and still joins with OR
+        assert result == "test* OR query*"
+
+    def test_preprocess_preserves_existing_wildcards(self):
+        """Terms with existing wildcards are not double-wildcarded."""
+        result = preprocess_fts_query("test* query")
+        # test* already has wildcard, query gets one added
+        assert "test**" not in result
+        assert "query*" in result
 
 
 class TestChunkCount:

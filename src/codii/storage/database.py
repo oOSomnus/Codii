@@ -125,9 +125,9 @@ class Database:
         """)
 
         conn.execute("""
-            CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
+            CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE OF content, path, language ON chunks BEGIN
                 INSERT INTO chunks_fts(chunks_fts, rowid, content, path, language)
-                VALUES('Delete', old.id, old.content, old.path, old.language);
+                VALUES('delete', old.id, old.content, old.path, old.language);
                 INSERT INTO chunks_fts(rowid, content, path, language)
                 VALUES (new.id, new.content, new.path, new.language);
             END
