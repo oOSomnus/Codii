@@ -74,7 +74,12 @@ The codebase follows a strict layered architecture where dependencies flow downw
 
 **Hybrid Search**: Uses Reciprocal Rank Fusion (RRF) to combine BM25 and vector search results. See `hybrid_search.py:_reciprocal_rank_fusion()`.
 
-**Cross-Encoder Re-ranking**: After RRF combines results, a cross-encoder model (`cross-encoder/ms-marco-MiniLM-L-6-v2`) re-scores candidates for improved relevance. Enabled by default, can be disabled via `rerank=False` parameter or config. Scores are normalized to 0-1 range using sigmoid; results below threshold (0.5) are filtered out.
+**Multi-Stage Search Pipeline**: The search follows a staged reduction approach:
+- Stage 1 (Retrieval): BM25 and Vector each return 50 candidates (`rerank_candidates`)
+- Stage 2 (RRF Merge): Reciprocal Rank Fusion merges and reduces to 20 results (`rrf_limit`)
+- Stage 3 (Re-ranking): Cross-encoder re-scores candidates for final top-k results
+
+**Cross-Encoder Re-ranking**: A cross-encoder model (`cross-encoder/ms-marco-MiniLM-L-6-v2`) re-scores the RRF-reduced candidates for improved relevance. Enabled by default, can be disabled via `rerank=False` parameter or config. Scores are normalized to 0-1 range using sigmoid; results below threshold (0.5) are filtered out.
 
 **Query Preprocessing**: Multi-word queries are preprocessed for better recall:
 - OR-based matching: "page table walk" → "page* OR table* OR walk*"

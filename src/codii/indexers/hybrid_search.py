@@ -104,12 +104,16 @@ class HybridSearch:
             vector_weight,
         )
 
-        # Apply re-ranking if enabled
+        # Stage 2: Sort and reduce to rrf_limit before re-ranking
+        results.sort(key=lambda x: x.combined_score, reverse=True)
+        if use_rerank:
+            results = results[:config.rrf_limit]
+
+        # Stage 3: Apply re-ranking if enabled
         if use_rerank and results:
             results = self._rerank_results(query, results, limit, config)
         else:
-            # Sort by combined score and limit
-            results.sort(key=lambda x: x.combined_score, reverse=True)
+            # No re-ranking: limit results
             results = results[:limit]
 
         # Add rank

@@ -95,7 +95,8 @@ class CodiiConfig:
     # Re-ranking settings
     rerank_enabled: bool = True  # Enabled by default
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"  # Fast and effective
-    rerank_candidates: int = 30  # Number of candidates to fetch for re-ranking
+    rerank_candidates: int = 50  # BM25/Vector initial candidates for Stage 1
+    rrf_limit: int = 20  # RRF results passed to re-ranking (Stage 2)
     rerank_threshold: float = 0.5  # Minimum score threshold (normalized 0-1)
 
     @property

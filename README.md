@@ -141,9 +141,10 @@ sequenceDiagram
 
     Note over C,FS: Search Flow
     C->>S: search_code(query)
-    S->>BM25: BM25 search
-    S->>VEC: Vector search
+    S->>BM25: BM25 search (50 candidates)
+    S->>VEC: Vector search (50 candidates)
     S->>S: Reciprocal Rank Fusion
+    S->>S: RRF reduction (top 20)
     S->>S: Cross-Encoder Re-ranking
     S-->>C: Search results
 ```
