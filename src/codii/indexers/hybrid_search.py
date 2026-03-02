@@ -56,6 +56,7 @@ class HybridSearch:
         limit: int = 10,
         path_filter: Optional[str] = None,
         rerank: Optional[bool] = None,
+        rerank_threshold: Optional[float] = None,
     ) -> List[SearchResult]:
         """
         Perform hybrid search using Reciprocal Rank Fusion.
@@ -65,6 +66,7 @@ class HybridSearch:
             limit: Maximum number of results
             path_filter: Optional path filter
             rerank: Override config setting for re-ranking (None uses config)
+            rerank_threshold: Override config setting for rerank threshold (None uses config)
 
         Returns:
             List of SearchResult objects ranked by combined RRF score,
@@ -77,11 +79,20 @@ class HybridSearch:
         # Determine if re-ranking is enabled
         use_rerank = config.rerank_enabled if rerank is None else rerank
 
+        # Use provided threshold or config default
+        effective_threshold = rerank_threshold if rerank_threshold is not None else config.rerank_threshold
+
         # Determine number of candidates to retrieve
+        # When requesting many results (e.g., for Recall@100), we need more candidates
         if use_rerank:
-            candidates_count = config.rerank_candidates
+            # Scale candidates based on requested limit
+            # For small limits, use configured rerank_candidates
+            # For larger limits, use more candidates to ensure good recall
+            candidates_count = max(config.rerank_candidates, limit * 2)
+            rrf_limit = max(config.rrf_limit, limit)
         else:
-            candidates_count = min(limit * 2, 50)
+            candidates_count = max(limit * 2, 50)
+            rrf_limit = limit
 
         # Get BM25 results
         bm25_results = self.bm25_indexer.search(
@@ -107,11 +118,11 @@ class HybridSearch:
         # Stage 2: Sort and reduce to rrf_limit before re-ranking
         results.sort(key=lambda x: x.combined_score, reverse=True)
         if use_rerank:
-            results = results[:config.rrf_limit]
+            results = results[:rrf_limit]
 
         # Stage 3: Apply re-ranking if enabled
         if use_rerank and results:
-            results = self._rerank_results(query, results, limit, config)
+            results = self._rerank_results(query, results, limit, config, effective_threshold)
         else:
             # No re-ranking: limit results
             results = results[:limit]
@@ -128,17 +139,19 @@ class HybridSearch:
         candidates: List[SearchResult],
         top_k: int,
         config,
+        threshold: Optional[float] = None,
     ) -> List[SearchResult]:
         """Apply cross-encoder re-ranking to candidates."""
         try:
             from ..embedding.cross_encoder import get_cross_encoder
 
             cross_encoder = get_cross_encoder(config.rerank_model)
+            effective_threshold = threshold if threshold is not None else config.rerank_threshold
             results = cross_encoder.rerank(
                 query,
                 candidates,
                 top_k=top_k,
-                threshold=config.rerank_threshold,
+                threshold=effective_threshold,
             )
             return results
         except Exception as e:

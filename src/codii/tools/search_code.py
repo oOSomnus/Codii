@@ -42,8 +42,8 @@ class SearchCodeTool:
                 },
                 "rerank": {
                     "type": "boolean",
-                    "default": True,
-                    "description": "Enable cross-encoder re-ranking for improved relevance (default: true)",
+                    "default": False,
+                    "description": "Enable cross-encoder re-ranking for improved relevance (default: false)",
                 },
             },
             "required": ["path", "query"],

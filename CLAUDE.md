@@ -8,6 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Install package
 uv pip install -e .
 
+# Install with benchmark dependencies
+uv pip install -e ".[benchmark]"
+
 # Run the CLI tool
 codii --help
 codii status
@@ -85,7 +88,7 @@ The codebase follows a strict layered architecture where dependencies flow downw
 - Stage 2 (RRF Merge): Reciprocal Rank Fusion merges and reduces to 20 results (`rrf_limit`)
 - Stage 3 (Re-ranking): Cross-encoder re-scores candidates for final top-k results
 
-**Cross-Encoder Re-ranking**: A cross-encoder model (`cross-encoder/ms-marco-MiniLM-L-6-v2`) re-scores the RRF-reduced candidates for improved relevance. Enabled by default, can be disabled via `rerank=False` parameter or config. Scores are normalized to 0-1 range using sigmoid; results below threshold (0.5) are filtered out.
+**Cross-Encoder Re-ranking**: A cross-encoder model (`cross-encoder/ms-marco-MiniLM-L-6-v2`) re-scores the RRF-reduced candidates for improved relevance. **Disabled by default** for faster searches; enable via `rerank=True` parameter or config. Scores are normalized to 0-1 range using sigmoid; results below threshold (0.5) are filtered out.
 
 **Query Preprocessing**: Multi-word queries are preprocessed for better recall:
 - OR-based matching: "page table walk" → "page* OR table* OR walk*"
@@ -145,3 +148,27 @@ The test suite uses pytest with mocked embeddings. Key patterns:
 - `tests/test_merkle/` - Merkle tree tests
 - `tests/test_tools/` - MCP tool tests
 - `tests/test_integration/` - End-to-end workflow tests
+- `tests/test_benchmark/` - CoIR benchmark evaluation tests
+
+## Benchmark Evaluation
+
+Codii includes a CoIR (Code Information Retrieval) benchmark adapter for evaluating search quality.
+
+```bash
+# Install benchmark dependencies
+uv pip install -e ".[benchmark]"
+
+# Run all CoIR tasks
+python scripts/run_coir_benchmark.py --output results/
+
+# Run specific tasks
+python scripts/run_coir_benchmark.py --tasks codetrans-dl,stackoverflow-qa
+
+# Quick test with limited samples
+python scripts/run_coir_benchmark.py --tasks codetrans-dl --limit 100
+
+# Enable cross-encoder re-ranking for evaluation
+python scripts/run_coir_benchmark.py --tasks codetrans-dl
+```
+
+The benchmark script evaluates codii's hybrid search on standard code retrieval tasks and reports NDCG@10, MRR@10, Recall@10, Recall@100, and MAP scores.

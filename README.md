@@ -152,7 +152,7 @@ sequenceDiagram
 ## Features
 
 - **Hybrid Search**: Combines BM25 (SQLite FTS5) and vector search (HNSW) for optimal code retrieval
-- **Cross-Encoder Re-ranking**: Results are re-scored with a cross-encoder for improved relevance (enabled by default)
+- **Cross-Encoder Re-ranking**: Results are re-scored with a cross-encoder for improved relevance (disabled by default for faster searches; enable with `rerank=true`)
 - **Smart Query Processing**: Multi-word queries are optimized with OR-matching, wildcards, code tokenization, and abbreviation expansion for better recall
 - **AST-Aware Chunking**: Uses tree-sitter for semantic code splitting (functions, classes, etc.)
 - **Parallel Indexing**: CPU-bound operations use parallel processing - AST chunking via ProcessPoolExecutor and multi-threaded HNSW index construction
@@ -402,7 +402,7 @@ Search indexed code.
     "query": "function to sort", # Required: Search query
     "limit": 10,                 # Optional: Max results (default 10, max 50)
     "extensionFilter": [".py"],  # Optional: Filter by extension
-    "rerank": true               # Optional: Enable cross-encoder re-ranking (default: true)
+    "rerank": false              # Optional: Enable cross-encoder re-ranking (default: false)
 }
 ```
 
@@ -576,6 +576,8 @@ codii/
 │   ├── embedding/             # Embedding utilities
 │   │   ├── embedder.py
 │   │   └── cross_encoder.py   # Re-ranking model
+│   ├── evaluation/            # Benchmark evaluation
+│   │   └── coir_adapter.py    # CoIR benchmark adapter
 │   ├── merkle/                # Change detection
 │   │   └── tree.py
 │   ├── storage/               # Persistence
@@ -584,8 +586,64 @@ codii/
 │   └── utils/                 # Utilities
 │       ├── config.py
 │       └── file_utils.py
+├── scripts/
+│   └── run_coir_benchmark.py  # Benchmark evaluation script
 └── pyproject.toml
 ```
+
+## Benchmark Evaluation
+
+Codii includes a CoIR (Code Information Retrieval) benchmark adapter for evaluating search quality on standard code retrieval tasks.
+
+### Installation
+
+```bash
+# Install with benchmark dependencies
+uv pip install -e ".[benchmark]"
+
+# Or with pip
+pip install -e ".[benchmark]"
+```
+
+### Running Benchmarks
+
+```bash
+# Run all CoIR tasks
+python scripts/run_coir_benchmark.py --output results/
+
+# Run specific tasks
+python scripts/run_coir_benchmark.py --tasks codetrans-dl,stackoverflow-qa
+
+# Quick test with limited samples
+python scripts/run_coir_benchmark.py --tasks codetrans-dl --limit 100
+
+# Enable re-ranking for evaluation
+python scripts/run_coir_benchmark.py --tasks codetrans-dl
+
+# Clean up datasets after run
+python scripts/run_coir_benchmark.py --tasks codetrans-dl --cleanup-datasets
+```
+
+### Available Tasks
+
+- `codetrans-dl` - Code translation (deep learning)
+- `codetrans-contest` - Code translation (contest)
+- `cosqa` - Code search QA
+- `stackoverflow-qa` - StackOverflow QA
+- `apps` - APPS dataset
+- `codefeedback-mt` - Code feedback (multi-turn)
+- `codefeedback-st` - Code feedback (single-turn)
+- `codetranspool` - Code translation pool
+- `codesearchnet` - CodeSearchNet
+- `stackoverflow-qa-mr` - StackOverflow QA (multi-round)
+
+### Metrics Reported
+
+- **NDCG@10** - Normalized Discounted Cumulative Gain at 10
+- **MRR@10** - Mean Reciprocal Rank at 10
+- **Recall@10** - Recall at 10
+- **Recall@100** - Recall at 100
+- **MAP** - Mean Average Precision
 
 ## Development
 

@@ -31,9 +31,9 @@ def preprocess_fts_query(query: str, use_or: bool = True, add_wildcards: bool = 
     if not query or not query.strip():
         return ""
 
-    # Remove FTS5 special characters that could cause issues
-    # FTS5 special chars: * ^ " ( ) - |
-    cleaned = re.sub(r'[*^"()\-|]', ' ', query)
+    # Remove ALL non-alphanumeric characters except spaces and underscores
+    # This ensures FTS5 syntax errors don't occur
+    cleaned = re.sub(r'[^a-zA-Z0-9\s_]', ' ', query)
 
     # Split into terms
     terms = cleaned.split()
@@ -45,6 +45,14 @@ def preprocess_fts_query(query: str, use_or: bool = True, add_wildcards: bool = 
     for term in terms:
         term = term.strip()
         if not term:
+            continue
+
+        # Skip very short terms that are just numbers or single chars
+        if len(term) <= 1:
+            continue
+
+        # Skip pure numbers (they don't help with semantic search)
+        if term.isdigit():
             continue
 
         # Add wildcard suffix for partial matching

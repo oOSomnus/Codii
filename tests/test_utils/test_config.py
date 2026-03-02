@@ -103,7 +103,7 @@ class TestCodiiConfig:
     def test_rerank_settings(self):
         """Test rerank settings."""
         config = CodiiConfig()
-        assert config.rerank_enabled is True
+        assert config.rerank_enabled is False
         assert config.rerank_model == "cross-encoder/ms-marco-MiniLM-L-6-v2"
         assert config.rerank_candidates == 50
         assert config.rrf_limit == 20
