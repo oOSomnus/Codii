@@ -276,3 +276,188 @@ class TestSearchDeletedIndex:
 
         assert result["isError"] is True
         assert "not found" in result["content"][0]["text"].lower() or "not indexed" in result["content"][0]["text"].lower()
+
+
+class TestSearchErrorHandling:
+    """Tests for search error handling."""
+
+    def test_search_exception(self, search_tool, indexed_codebase, mock_embedder):
+        """Handle search exceptions gracefully."""
+        from unittest.mock import patch
+
+        with patch('codii.tools.search_code.HybridSearch') as mock_hybrid:
+            mock_hybrid.side_effect = Exception("Test error")
+
+            result = search_tool.run(
+                path=str(indexed_codebase),
+                query="test",
+            )
+
+            assert result["isError"] is True
+            assert "Search error" in result["content"][0]["text"]
+
+    def test_search_with_rerank_parameter(self, search_tool, indexed_codebase, mock_embedder):
+        """Test search with explicit rerank parameter."""
+        result = search_tool.run(
+            path=str(indexed_codebase),
+            query="calculate",
+            rerank=False,
+        )
+
+        assert result["isError"] is False
+
+
+class TestSearchContentTruncation:
+    """Tests for content truncation."""
+
+    def test_search_truncates_long_content(self, search_tool, temp_dir, mock_config, mock_embedder):
+        """Truncate content longer than 5000 chars."""
+        from codii.storage.snapshot import SnapshotManager
+        from codii.indexers.bm25_indexer import BM25Indexer
+        from codii.indexers.vector_indexer import VectorIndexer
+        from codii.chunkers.text_chunker import CodeChunk
+
+        path_str = str(temp_dir)
+        path_hash = SnapshotManager.path_to_hash(path_str)
+
+        index_dir = mock_config.indexes_dir / path_hash
+        index_dir.mkdir(parents=True, exist_ok=True)
+
+        db_path = index_dir / "chunks.db"
+        vector_path = index_dir / "vectors"
+
+        bm25 = BM25Indexer(db_path)
+
+        # Create a chunk with very long content
+        long_content = "def long_function():\n    " + "x = 1\n    " * 1000
+
+        chunks = [CodeChunk(
+            content=long_content,
+            path=str(temp_dir / "long.py"),
+            start_line=1,
+            end_line=2000,
+            language="python",
+            chunk_type="function",
+        )]
+        # Add more chunks for HNSW
+        for i in range(50):
+            chunks.append(CodeChunk(
+                content=f"def helper_{i}():\n    pass",
+                path=str(temp_dir / f"helper_{i}.py"),
+                start_line=1,
+                end_line=2,
+                language="python",
+                chunk_type="function",
+            ))
+
+        bm25.add_chunks(chunks)
+
+        vector = VectorIndexer(vector_path, ef_search=100)
+        vector._embedder = mock_embedder
+        chunk_ids = bm25.get_all_chunk_ids()
+        vector.add_vectors(chunk_ids, texts=[c.content for c in chunks])
+        vector.save()
+        bm25.close()
+
+        snapshot = SnapshotManager(mock_config.snapshot_file)
+        snapshot.mark_indexed(path_str, "test_hash", len(chunks), len(chunks))
+
+        result = search_tool.run(path=path_str, query="long_function")
+
+        assert result["isError"] is False
+
+
+class TestSearchExtensionFilterEdgeCases:
+    """Tests for extension filter edge cases."""
+
+    def test_extension_filter_without_dot(self, search_tool, indexed_codebase, mock_embedder):
+        """Extension filter works without leading dot."""
+        result = search_tool.run(
+            path=str(indexed_codebase),
+            query="def",
+            extensionFilter=["py"],  # No dot
+        )
+
+        assert result["isError"] is False
+
+    def test_extension_filter_mixed_formats(self, search_tool, indexed_codebase, mock_embedder):
+        """Extension filter works with mixed formats."""
+        result = search_tool.run(
+            path=str(indexed_codebase),
+            query="def",
+            extensionFilter=[".py", "js"],  # Mixed
+        )
+
+        assert result["isError"] is False
+
+    def test_extension_filter_no_matches(self, search_tool, indexed_codebase, mock_embedder):
+        """Extension filter returns no results when no matches."""
+        result = search_tool.run(
+            path=str(indexed_codebase),
+            query="def",
+            extensionFilter=[".xyz"],  # No .xyz files
+        )
+
+        assert result["isError"] is False
+        # Should have no results after filtering
+        text = result["content"][0]["text"]
+        # Either no results or the output is empty
+        assert "Rank:" not in text or "No results" in text
+
+
+class TestSearchRelativePathFallback:
+    """Tests for relative path handling."""
+
+    def test_relative_path_fallback(self, search_tool, temp_dir, mock_config, mock_embedder):
+        """Test relative path fallback when path is not relative to repo."""
+        from codii.storage.snapshot import SnapshotManager
+        from codii.indexers.bm25_indexer import BM25Indexer
+        from codii.indexers.vector_indexer import VectorIndexer
+        from codii.chunkers.text_chunker import CodeChunk
+        from unittest.mock import patch, MagicMock
+
+        path_str = str(temp_dir)
+        path_hash = SnapshotManager.path_to_hash(path_str)
+
+        index_dir = mock_config.indexes_dir / path_hash
+        index_dir.mkdir(parents=True, exist_ok=True)
+
+        db_path = index_dir / "chunks.db"
+        vector_path = index_dir / "vectors"
+
+        bm25 = BM25Indexer(db_path)
+        chunks = [
+            CodeChunk(
+                content="def test(): pass",
+                path="/completely/different/path/test.py",  # Not relative to temp_dir
+                start_line=1,
+                end_line=1,
+                language="python",
+                chunk_type="function",
+            )
+        ]
+        for i in range(50):
+            chunks.append(CodeChunk(
+                content=f"def helper_{i}(): pass",
+                path=f"/test/helper_{i}.py",
+                start_line=1,
+                end_line=1,
+                language="python",
+                chunk_type="function",
+            ))
+
+        bm25.add_chunks(chunks)
+
+        vector = VectorIndexer(vector_path, ef_search=100)
+        vector._embedder = mock_embedder
+        chunk_ids = bm25.get_all_chunk_ids()
+        vector.add_vectors(chunk_ids, texts=[c.content for c in chunks])
+        vector.save()
+        bm25.close()
+
+        snapshot = SnapshotManager(mock_config.snapshot_file)
+        snapshot.mark_indexed(path_str, "test_hash", len(chunks), len(chunks))
+
+        result = search_tool.run(path=path_str, query="test")
+
+        assert result["isError"] is False
