@@ -446,9 +446,9 @@ Available tasks:
         help="Limit number of queries per task (for quick testing)",
     )
     parser.add_argument(
-        "--no-rerank",
+        "--rerank",
         action="store_true",
-        help="Disable cross-encoder re-ranking",
+        help="Enable cross-encoder re-ranking (default: disabled)",
     )
     parser.add_argument(
         "--bm25-weight",
@@ -493,7 +493,7 @@ Available tasks:
         tasks=tasks,
         limit=args.limit,
         output_dir=args.output,
-        rerank=not args.no_rerank,
+        rerank=args.rerank,
         bm25_weight=args.bm25_weight,
         vector_weight=args.vector_weight,
         keep_index=args.keep_index,

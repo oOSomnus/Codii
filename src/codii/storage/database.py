@@ -31,6 +31,10 @@ def preprocess_fts_query(query: str, use_or: bool = True, add_wildcards: bool = 
     if not query or not query.strip():
         return ""
 
+    # FTS5 reserved words that cause syntax errors when used as terms
+    # See: https://www.sqlite.org/fts5.html#fts5_strings
+    FTS5_RESERVED = {'AND', 'OR', 'NOT', 'NEAR'}
+
     # Remove ALL non-alphanumeric characters except spaces and underscores
     # This ensures FTS5 syntax errors don't occur
     cleaned = re.sub(r'[^a-zA-Z0-9\s_]', ' ', query)
@@ -53,6 +57,10 @@ def preprocess_fts_query(query: str, use_or: bool = True, add_wildcards: bool = 
 
         # Skip pure numbers (they don't help with semantic search)
         if term.isdigit():
+            continue
+
+        # Skip FTS5 reserved words to avoid syntax errors
+        if term.upper() in FTS5_RESERVED:
             continue
 
         # Add wildcard suffix for partial matching
